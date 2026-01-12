@@ -4,9 +4,11 @@ import { useState } from 'react';
 import Image from 'next/image';
 import algarLogo from '@/assets/logo_algar.png';
 import JsonView from '@uiw/react-json-view'; // Visualizador de JSON
+import { useRouter } from 'next/navigation'; // <--- Importe o useRouter
 
 export const UploadPdfReport = () => {
   const [cnpj, setCnpj] = useState('');
+  const router = useRouter(); // <--- Instancie o router
   
   // Estados de Controle
   const [isLoadingData, setIsLoadingData] = useState(false); // Carregando Aliant
@@ -85,11 +87,24 @@ export const UploadPdfReport = () => {
     }
   };
 
+  // Função para fazer logout
+  const handleLogout = async () => {
+    await fetch('/api/auth/logout');
+    router.push('/login');
+  };
+
   return (
     <div className='w-full h-auto bg-white flex flex-col items-center pb-20'>
       {/* Header */}
       <div className='h-72 md:min-h-[400px] w-full flex flex-col gap-10 items-center justify-center bg-gradient-to-l from-[#1E4C78] to-[#1E4C78] relative shadow-lg'>
         <Image src={algarLogo} alt='Logo Algar' width={160} height={20} className="absolute top-4 left-4" />
+        {/* BOTÃO DE LOGOUT (NOVO) */}
+        <button 
+          onClick={handleLogout}
+          className="absolute top-4 right-4 bg-red-500/80 hover:bg-red-600 text-white text-sm font-bold px-4 py-2 rounded transition-colors"
+        >
+          Sair / Logout
+        </button>
         <h2 className='font-bold text-2xl md:text-4xl text-white mt-10'>🧠 Inteli Diligence</h2>
         
         <div className="flex flex-col md:flex-row gap-2 items-center w-full max-w-lg z-10">
