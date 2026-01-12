@@ -1,84 +1,175 @@
-// Frontend atualizado sincronizado com backend PDF + OpenAI
-
 'use client';
 
-import { ChangeEvent, useState } from 'react';
+import { useState } from 'react';
 import Image from 'next/image';
 import algarLogo from '@/assets/logo_algar.png';
+import JsonView from '@uiw/react-json-view'; // Visualizador de JSON
 
 export const UploadPdfReport = () => {
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [report, setReport] = useState('');
+  const [cnpj, setCnpj] = useState('');
+  
+  // Estados de Controle
+  const [isLoadingData, setIsLoadingData] = useState(false); // Carregando Aliant
+  const [isAnalyzing, setIsAnalyzing] = useState(false);     // Carregando OpenAI
+  
+  // Estados de Dados
+  const [companyData, setCompanyData] = useState<any>(null); // JSON bruto
+  const [report, setReport] = useState('');                  // Parecer final
   const [errorMessage, setErrorMessage] = useState('');
 
-  const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Máscara CNPJ
+  const handleCnpjChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let value = e.target.value.replace(/\D/g, '');
+    if (value.length > 14) value = value.slice(0, 14);
+    value = value.replace(/^(\d{2})(\d)/, '$1.$2');
+    value = value.replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3');
+    value = value.replace(/\.(\d{3})(\d)/, '.$1/$2');
+    value = value.replace(/(\d{4})(\d)/, '$1-$2');
+    setCnpj(value);
+  };
 
-    if (file.type !== 'application/pdf') {
-      setErrorMessage('Por favor, envie apenas arquivos PDF.');
+  // PASSO 1: Buscar Dados (Aliant)
+  const handleConsultData = async () => {
+    const cleanCnpj = cnpj.replace(/\D/g, '');
+    if (cleanCnpj.length !== 14) {
+      setErrorMessage('CNPJ inválido.');
       return;
     }
 
-    setIsProcessing(true);
+    setIsLoadingData(true);
     setErrorMessage('');
+    setCompanyData(null);
     setReport('');
 
-    const formData = new FormData();
-    formData.append('file', file);
-
     try {
-      const response = await fetch('/api/process-pdf', {
+      const response = await fetch('/api/consult-company', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cnpj }),
       });
 
-      const responseText = await response.text();
+      const data = await response.json();
 
-      if (!response.ok) {
-        console.error('Resposta com erro:', response.status, responseText);
-        throw new Error(`Falha ao processar o arquivo: ${response.statusText}`);
-      }
-
-      const data = JSON.parse(responseText);
-      setReport(data.generatedReport);
+      if (!response.ok) throw new Error(data.details || 'Erro ao consultar.');
+      
+      setCompanyData(data); // Salva o JSON para exibir
     } catch (error) {
-      console.error('Erro ao processar PDF:', error);
-      setErrorMessage('Erro ao gerar relatório. Verifique o backend ou tente novamente.');
+      setErrorMessage(error instanceof Error ? error.message : 'Erro desconhecido.');
     } finally {
-      setIsProcessing(false);
+      setIsLoadingData(false);
     }
   };
 
+  // PASSO 2: Gerar Parecer (OpenAI)
+  const handleGenerateReport = async () => {
+    if (!companyData) return;
+
+    setIsAnalyzing(true);
+    setErrorMessage('');
+
+    try {
+      const response = await fetch('/api/generate-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyData }), // Envia o JSON que já temos no front
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Erro ao gerar parecer.');
+
+      setReport(data.generatedReport);
+    } catch (error) {
+      setErrorMessage('Erro ao gerar análise com IA.');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
 
   return (
-    <div className='w-full h-auto bg-white flex flex-col justify-center items-center gap-4'>
-      <div className='h-72 md:min-h-[600px] p-8 md:p-10 w-full flex flex-col gap-14 items-center justify-center bg-gradient-to-l from-[#1E4C78] to-[#1E4C78] via-[#1E4C78]'>
-        <Image src={algarLogo} alt='Logo Algar' width={160} height={20} style={{ position: 'absolute', top: 10, left: 10, padding: '10px' }} />
-        <h2 className='font-bold text-2xl md:text-4xl text-white'>🧠 Bem-vindo ao Inteli Diligence 🧠</h2>
-        <p className='mt-[-30px] text-[20px] font-bold'>Envie o relatório em PDF para gerar o parecer automaticamente</p>
-        <input
-          type='file'
-          accept='application/pdf'
-          onChange={handleFileUpload}
-          className='mt-[-20px] text-[15px] font-bold'
-        />
+    <div className='w-full h-auto bg-white flex flex-col items-center pb-20'>
+      {/* Header */}
+      <div className='h-72 md:min-h-[400px] w-full flex flex-col gap-10 items-center justify-center bg-gradient-to-l from-[#1E4C78] to-[#1E4C78] relative shadow-lg'>
+        <Image src={algarLogo} alt='Logo Algar' width={160} height={20} className="absolute top-4 left-4" />
+        <h2 className='font-bold text-2xl md:text-4xl text-white mt-10'>🧠 Inteli Diligence</h2>
+        
+        <div className="flex flex-col md:flex-row gap-2 items-center w-full max-w-lg z-10">
+          <input
+            type='text'
+            value={cnpj}
+            onChange={handleCnpjChange}
+            placeholder="00.000.000/0000-00"
+            className='w-full p-4 rounded-lg text-lg font-bold text-gray-800 outline-none shadow-lg'
+          />
+          <button 
+            onClick={handleConsultData}
+            disabled={isLoadingData || isAnalyzing}
+            className='w-full md:w-auto px-8 py-4 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg shadow-lg disabled:opacity-50 transition-all'
+          >
+            {isLoadingData ? 'Buscando...' : 'Consultar'}
+          </button>
+        </div>
       </div>
-      {isProcessing && (
-        <div className='h-28 w-full flex items-center justify-center'>
-          <div className='w-12 h-12 border-8 border-blue-500 border-t-transparent rounded-full animate-spin'></div>
-        </div>
-      )}
 
+      {/* Mensagens de Erro */}
       {errorMessage && (
-        <div className='w-full text-center text-red-500 font-bold'>{errorMessage}</div>
-      )}
-
-      {report && (
-        <div className='w-full max-w-[900px] p-8 text-black bg-gray-50 rounded-lg shadow-sm'>
-          <pre className='whitespace-pre-wrap'>{report}</pre>
+        <div className='mt-8 p-4 bg-red-100 text-red-700 border border-red-300 rounded font-bold'>
+          {errorMessage}
         </div>
       )}
+
+      {/* Área de Conteúdo */}
+      <div className="w-full max-w-6xl px-4 mt-8 flex flex-col gap-8">
+        
+        {/* Seção 1: Dados Brutos (JSON) */}
+        {companyData && (
+          <div className="w-full border rounded-lg shadow-sm overflow-hidden bg-gray-50">
+            <div className="bg-gray-200 p-4 border-b flex justify-between items-center">
+              <h3 className="font-bold text-gray-700">📄 Dados Retornados (Aliant)</h3>
+              <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">JSON</span>
+            </div>
+            
+            <div className="p-4 max-h-[400px] overflow-auto">
+              {/* Componente para visualizar JSON de forma bonita */}
+              <JsonView value={companyData} collapsed={2} />
+            </div>
+
+            {/* Botão de Ação para a próxima etapa */}
+            {!report && (
+              <div className="p-4 bg-white border-t flex justify-end">
+                <button
+                  onClick={handleGenerateReport}
+                  disabled={isAnalyzing}
+                  className="bg-[#1E4C78] text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-900 transition-colors flex items-center gap-2"
+                >
+                  {isAnalyzing ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      Analisando...
+                    </>
+                  ) : (
+                    '🤖 Gerar Parecer com IA'
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Seção 2: Parecer da IA */}
+        {report && (
+          <div className='w-full p-8 text-black bg-white rounded-lg shadow-md border-l-8 border-[#1E4C78] animate-fade-in-up'>
+            <h3 className="text-2xl font-bold mb-6 text-[#1E4C78] flex items-center gap-2">
+              📝 Parecer da Auditoria
+            </h3>
+            <div className="prose max-w-none">
+              <pre className='whitespace-pre-wrap font-sans text-gray-800 leading-relaxed text-base'>
+                {report}
+              </pre>
+            </div>
+          </div>
+        )}
+
+      </div>
     </div>
   );
 };
