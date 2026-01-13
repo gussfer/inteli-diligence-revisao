@@ -1,0 +1,39 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 1. Tabela de Usuários Permitidos
+model AllowedUser {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+// 2. Tabela de Logs de Acesso
+model AccessLog {
+  id        String   @id @default(uuid())
+  email     String
+  action    String
+  ip        String?
+  timestamp DateTime @default(now())
+}
+
+// 3. Tabela de Consultas
+model Consultation {
+  id              String   @id @default(uuid())
+  cnpj            String
+  companyName     String?  
+  rawJson         Json?    
+  aiReport        String?  
+  requestedBy     String
+  createdAt       DateTime @default(now())
+}

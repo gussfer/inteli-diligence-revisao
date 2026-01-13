@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
-import { activeCodes } from '@/lib/store';
+import { activeCodes } from '@/lib/store'; // Mantemos a memória para o código temporário
+import { prisma } from '@/lib/prisma';     // <--- Importamos o banco
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,18 +11,29 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'E-mail inválido' }, { status: 400 });
     }
 
-    // Gera código de 6 dígitos
+    const emailLower = email.toLowerCase().trim();
+
+    // --- NOVA VERIFICAÇÃO NO BANCO ---
+    const user = await prisma.allowedUser.findUnique({
+      where: { email: emailLower }
+    });
+
+    if (!user || !user.isActive) {
+      // Dica de segurança: Às vezes é bom não avisar que o e-mail não existe,
+      // mas como é ferramenta interna, vamos avisar para facilitar.
+      return NextResponse.json({ error: 'Acesso negado. Usuário não cadastrado ou inativo.' }, { status: 403 });
+    }
+    // ---------------------------------
+
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     
-    // Salva na memória (expira em 5 minutos)
-    activeCodes.set(email, {
+    activeCodes.set(emailLower, {
       code,
       expires: Date.now() + 5 * 60 * 1000
     });
 
-    // Configura o transportador de e-mail
     const transporter = nodemailer.createTransport({
-      service: 'gmail', // Ou outro serviço SMTP
+      service: 'gmail',
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS,
@@ -30,15 +42,15 @@ export async function POST(req: NextRequest) {
 
     await transporter.sendMail({
       from: `"Inteli Diligence" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: 'Seu código de acesso - Inteli Diligence',
-      text: `Seu código de verificação é: ${code}`,
-      html: `<p>Seu código de verificação é: <b>${code}</b></p><p>Válido por 5 minutos.</p>`,
+      to: emailLower,
+      subject: 'Seu código de acesso',
+      text: `Seu código: ${code}`,
+      html: `<p>Seu código é: <b>${code}</b></p>`,
     });
 
     return NextResponse.json({ message: 'Código enviado' });
   } catch (error) {
     console.error(error);
-    return NextResponse.json({ error: 'Erro ao enviar e-mail' }, { status: 500 });
+    return NextResponse.json({ error: 'Erro ao processar solicitação' }, { status: 500 });
   }
 }

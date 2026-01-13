@@ -60,7 +60,7 @@ export default function LoginPage() {
             <Image src={algarLogo} alt="Algar" width={120} height={20} />
         </div>
         
-        <h2 className="text-2xl font-bold text-[#1E4C78]">Acesso Restrito</h2>
+        <h2 className="text-2xl font-bold text-[#1E4C78]">Inteli Diligence 🧠</h2>
 
         {error && <div className="text-red-500 text-sm font-bold">{error}</div>}
 

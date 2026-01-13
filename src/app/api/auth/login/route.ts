@@ -1,48 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SignJWT } from 'jose';
 import { cookies } from 'next/headers';
-import { activeCodes, addLog } from '@/lib/store';
+import { activeCodes } from '@/lib/store';
+import { prisma } from '@/lib/prisma'; // <--- Importamos o banco
 
 export async function POST(req: NextRequest) {
   try {
     const { email, code } = await req.json();
-    
-    // Normaliza para minúsculo para evitar erros de digitação
     const emailLower = email.toLowerCase().trim();
     const codeClean = code.trim();
 
     const stored = activeCodes.get(emailLower);
 
-    // --- DEBUG NO TERMINAL DO VSCODE ---
-    console.log('--- TENTATIVA DE LOGIN ---');
-    console.log(`Email recebido: ${emailLower}`);
-    console.log(`Código recebido: ${codeClean}`);
-    console.log(`Código esperado: ${stored?.code}`);
-    console.log(`Expira em: ${stored ? new Date(stored.expires).toLocaleTimeString() : 'N/A'}`);
-    // -----------------------------------
+    // Função auxiliar para gravar log no banco
+    const logAccess = async (action: string) => {
+      await prisma.accessLog.create({
+        data: {
+          email: emailLower,
+          action: action,
+          // ip: req.headers.get('x-forwarded-for') || 'unknown' // (Opcional se quiser pegar IP)
+        }
+      });
+    };
 
-    // Validação 1: Código existe?
     if (!stored) {
-      console.log('ERRO: Código não encontrado na memória (Servidor reiniciou?)');
-      addLog({ email: emailLower, timestamp: new Date().toLocaleString(), action: 'ACCESS_DENIED' });
-      return NextResponse.json({ error: 'Código não encontrado. Solicite um novo.' }, { status: 401 });
+      await logAccess('ACCESS_DENIED_NO_CODE');
+      return NextResponse.json({ error: 'Código não encontrado. Solicite novo.' }, { status: 401 });
     }
 
-    // Validação 2: Código bate?
     if (stored.code !== codeClean) {
-      console.log('ERRO: Código incorreto');
-      addLog({ email: emailLower, timestamp: new Date().toLocaleString(), action: 'ACCESS_DENIED' });
+      await logAccess('ACCESS_DENIED_WRONG_CODE');
       return NextResponse.json({ error: 'Código incorreto' }, { status: 401 });
     }
 
-    // Validação 3: Expirou?
     if (Date.now() > stored.expires) {
-      console.log('ERRO: Código expirado');
       activeCodes.delete(emailLower);
+      await logAccess('ACCESS_DENIED_EXPIRED');
       return NextResponse.json({ error: 'Código expirado' }, { status: 401 });
     }
 
-    // SUCESSO
+    // --- SUCESSO ---
     const secret = new TextEncoder().encode(process.env.JWT_SECRET);
     const token = await new SignJWT({ email: emailLower })
       .setProtectedHeader({ alg: 'HS256' })
@@ -52,18 +49,19 @@ export async function POST(req: NextRequest) {
     (await cookies()).set('auth_token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      maxAge: 60 * 60 * 2, // 2 horas
+      maxAge: 60 * 60 * 2,
       path: '/',
     });
 
-    activeCodes.delete(emailLower); // Limpa o código usado
-    addLog({ email: emailLower, timestamp: new Date().toLocaleString(), action: 'LOGIN' });
-    console.log('SUCESSO: Login realizado');
+    activeCodes.delete(emailLower);
+    
+    // Grava o Login com sucesso no banco
+    await logAccess('LOGIN_SUCCESS');
 
     return NextResponse.json({ message: 'Login realizado' });
 
   } catch (error) {
-    console.error('Erro interno no login:', error);
-    return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 });
+    console.error('Erro no login:', error);
+    return NextResponse.json({ error: 'Erro interno' }, { status: 500 });
   }
 }
