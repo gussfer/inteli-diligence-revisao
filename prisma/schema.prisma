@@ -5,8 +5,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // Usa o Pooler (Rápido)
+  directUrl = env("DIRECT_URL")   // Usa a Direta (Para Migrations)
 }
 
 // 1. Tabela de Usuários Permitidos
