@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SignJWT } from 'jose';
 import { cookies } from 'next/headers';
-import { activeCodes } from '@/lib/store';
-import { prisma } from '@/lib/prisma'; // <--- Importamos o banco
+import { prisma } from '@/lib/prisma'; // Importa o banco
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,36 +9,29 @@ export async function POST(req: NextRequest) {
     const emailLower = email.toLowerCase().trim();
     const codeClean = code.trim();
 
-    const stored = activeCodes.get(emailLower);
-
-    // Função auxiliar para gravar log no banco
-    const logAccess = async (action: string) => {
-      await prisma.accessLog.create({
-        data: {
-          email: emailLower,
-          action: action,
-          // ip: req.headers.get('x-forwarded-for') || 'unknown' // (Opcional se quiser pegar IP)
+    // --- MUDANÇA AQUI: Busca no Banco de Dados ---
+    const validCode = await prisma.verificationCode.findFirst({
+      where: {
+        email: emailLower,
+        code: codeClean,
+        expiresAt: {
+          gt: new Date() // Garante que a data de expiração é MAIOR que agora (não venceu)
         }
-      });
-    };
+      }
+    });
 
-    if (!stored) {
-      await logAccess('ACCESS_DENIED_NO_CODE');
-      return NextResponse.json({ error: 'Código não encontrado. Solicite novo.' }, { status: 401 });
+    if (!validCode) {
+      // Se não achou, ou o código tá errado ou venceu
+      return NextResponse.json({ error: 'Código inválido ou expirado' }, { status: 401 });
     }
 
-    if (stored.code !== codeClean) {
-      await logAccess('ACCESS_DENIED_WRONG_CODE');
-      return NextResponse.json({ error: 'Código incorreto' }, { status: 401 });
-    }
+    // Se achou, deleta o código para não ser usado duas vezes (segurança)
+    await prisma.verificationCode.delete({
+      where: { id: validCode.id }
+    });
+    // ---------------------------------------------
 
-    if (Date.now() > stored.expires) {
-      activeCodes.delete(emailLower);
-      await logAccess('ACCESS_DENIED_EXPIRED');
-      return NextResponse.json({ error: 'Código expirado' }, { status: 401 });
-    }
-
-    // --- SUCESSO ---
+    // Gera o Token JWT (Mantido igual)
     const secret = new TextEncoder().encode(process.env.JWT_SECRET);
     const token = await new SignJWT({ email: emailLower })
       .setProtectedHeader({ alg: 'HS256' })
@@ -52,11 +44,11 @@ export async function POST(req: NextRequest) {
       maxAge: 60 * 60 * 2,
       path: '/',
     });
-
-    activeCodes.delete(emailLower);
     
-    // Grava o Login com sucesso no banco
-    await logAccess('LOGIN_SUCCESS');
+    // Log de acesso (Mantido igual)
+    await prisma.accessLog.create({
+        data: { email: emailLower, action: 'LOGIN_SUCCESS' }
+    });
 
     return NextResponse.json({ message: 'Login realizado' });
 

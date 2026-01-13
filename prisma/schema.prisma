@@ -38,3 +38,14 @@ model Consultation {
   requestedBy     String
   createdAt       DateTime @default(now())
 }
+
+// Tabela para guardar códigos temporários de login
+model VerificationCode {
+  id        String   @id @default(uuid())
+  email     String
+  code      String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([email])
+}
