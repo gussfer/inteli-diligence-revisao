@@ -1,63 +1,70 @@
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
-import { activeCodes } from '@/lib/store';
 import { prisma } from '@/lib/prisma';
 
 export async function POST(req: NextRequest) {
+  console.log("--- INÍCIO DO PROCESSO DE ENVIO ---"); // LOG 1
+
   try {
     const { email } = await req.json();
-
-    if (!email || !email.includes('@')) {
-      return NextResponse.json({ error: 'E-mail inválido' }, { status: 400 });
-    }
-
     const emailLower = email.toLowerCase().trim();
+    console.log("Email recebido:", emailLower); // LOG 2
 
-    // 1. Verifica permissão no banco
+    // 1. Verifica User
     const user = await prisma.allowedUser.findUnique({
       where: { email: emailLower }
     });
 
     if (!user || !user.isActive) {
-      return NextResponse.json({ error: 'Acesso negado. Usuário não cadastrado.' }, { status: 403 });
+      console.log("Usuário não encontrado ou inativo"); // LOG ERRO
+      return NextResponse.json({ error: 'Acesso negado.' }, { status: 403 });
     }
 
-    // 2. Gera código
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    activeCodes.set(emailLower, {
-      code,
-      expires: Date.now() + 5 * 60 * 1000
+    console.log("Código Gerado:", code); // LOG 3
+
+    // 2. Salva no Banco (AQUI ESTÁ O MISTÉRIO)
+    console.log("Tentando salvar no banco..."); // LOG 4
+    
+    // Limpa anteriores
+    await prisma.verificationCode.deleteMany({
+      where: { email: emailLower }
     });
 
-    // 3. Transporter GMAIL (Mais permissivo para apps de teste)
+    // Cria novo
+    const savedCode = await prisma.verificationCode.create({
+      data: {
+        email: emailLower,
+        code: code,
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000)
+      }
+    });
+    
+    console.log("Salvo no banco com sucesso! ID:", savedCode.id); // LOG 5
+
+    // 3. Envia Email
+    console.log("Preparando envio de email..."); // LOG 6
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
-        user: process.env.EMAIL_USER, // Seu gmail
-        pass: process.env.EMAIL_PASS, // Sua senha de app do gmail
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
       },
     });
 
-    // 4. Envia o e-mail
     await transporter.sendMail({
       from: `"Inteli Diligence" <${process.env.EMAIL_USER}>`,
-      to: emailLower, // Envia PARA o e-mail corporativo da Algar
-      subject: 'Código de Acesso - Inteli Diligence',
-      html: `
-        <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-          <h2 style="color: #1E4C78;">Inteli Diligence</h2>
-          <p>Seu código de acesso é:</p>
-          <div style="background-color: #f4f4f4; padding: 15px; font-size: 24px; font-weight: bold; text-align: center; width: 200px;">
-            ${code}
-          </div>
-        </div>
-      `,
+      to: emailLower,
+      subject: 'Código de Verificação',
+      html: `<p>Seu código: <b>${code}</b></p>`,
     });
+    
+    console.log("Email enviado!"); // LOG 7
 
     return NextResponse.json({ message: 'Código enviado' });
 
   } catch (error) {
-    console.error('Erro:', error);
-    return NextResponse.json({ error: 'Erro no envio de e-mail' }, { status: 500 });
+    console.error('ERRO FATAL:', error); // LOG ERRO FATAL
+    return NextResponse.json({ error: 'Erro no envio.' }, { status: 500 });
   }
 }
