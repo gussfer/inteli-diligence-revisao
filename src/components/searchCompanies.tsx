@@ -6,22 +6,22 @@ import algarLogo from '@/assets/logo_algar.png';
 import JsonView from '@uiw/react-json-view'; // Visualizador de JSON
 import { useRouter } from 'next/navigation'; 
 
-export const UploadPdfReport = () => {
+export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para SearchCompanies futuramente
   const [cnpj, setCnpj] = useState('');
   const router = useRouter(); 
 
-  const [isSaving, setIsSaving] = useState(false); // Novo estado de loading para o botão salvar
+  const [isSaving, setIsSaving] = useState(false);
   
   // Estados de Controle
-  const [isLoadingData, setIsLoadingData] = useState(false); // Carregando Aliant
-  const [isAnalyzing, setIsAnalyzing] = useState(false);     // Carregando OpenAI
+  const [isLoadingData, setIsLoadingData] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);    
   
   // Estados de Dados
-  const [companyData, setCompanyData] = useState<any>(null); // JSON bruto
+  const [companyData, setCompanyData] = useState<any>(null);
   
-  // --- MUDANÇA 1: Novos estados para o Parecer 2.0 ---
-  const [reportText, setReportText] = useState('');          // Texto Editável
-  const [riskLevel, setRiskLevel] = useState('');            // Risco (BAIXO, MEDIO, ALTO)
+  // Estados para o Parecer 2.0
+  const [reportText, setReportText] = useState('');          
+  const [riskLevel, setRiskLevel] = useState('');            
   const [errorMessage, setErrorMessage] = useState('');
 
   // Máscara CNPJ
@@ -46,8 +46,8 @@ export const UploadPdfReport = () => {
     setIsLoadingData(true);
     setErrorMessage('');
     setCompanyData(null);
-    setReportText(''); // Limpa relatório anterior
-    setRiskLevel('');  // Limpa risco anterior
+    setReportText(''); 
+    setRiskLevel('');  
 
     try {
       const response = await fetch('/api/consult-company', {
@@ -85,8 +85,6 @@ export const UploadPdfReport = () => {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Erro ao gerar parecer.');
 
-      // --- MUDANÇA 2: Processar JSON estruturado ---
-      // Agora esperamos que o backend retorne { riskLevel, reportText }
       setReportText(data.reportText || data.generatedReport || "Erro ao ler texto.");
       setRiskLevel(data.riskLevel || "NÃO CLASSIFICADO");
 
@@ -113,7 +111,8 @@ export const UploadPdfReport = () => {
       default: return 'bg-gray-500';
     }
   };
-// Função para salvar informações no banco
+
+  // Função para salvar informações no banco
   const handleFinalize = async () => {
     if (!companyData || !reportText) return;
 
@@ -124,9 +123,9 @@ export const UploadPdfReport = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          companyData: companyData, // Envia o JSON original
-          reportText: reportText,   // Envia o texto QUE ESTÁ NA TELA (pode ter sido editado)
-          riskLevel: riskLevel      // Envia o risco
+          companyData: companyData,
+          reportText: reportText,   
+          riskLevel: riskLevel      
         }),
       });
 
@@ -134,11 +133,6 @@ export const UploadPdfReport = () => {
 
       alert('✅ Auditoria finalizada e salva com sucesso!');
       
-      // Opcional: Limpar a tela ou redirecionar
-      // setCompanyData(null);
-      // setReportText('');
-      // setCnpj('');
-
     } catch (error) {
       alert('Erro ao salvar o registro.');
       console.error(error);
@@ -161,7 +155,14 @@ export const UploadPdfReport = () => {
         </button>
         <h2 className='font-bold text-2xl md:text-4xl text-white mt-10'>🧠 Inteli Diligence</h2>
         
-        <div className="flex flex-col md:flex-row gap-2 items-center w-full max-w-lg z-10">
+        {/* --- AQUI ESTÁ A MUDANÇA: DIV TROCADO POR FORM --- */}
+        <form 
+          onSubmit={(e) => {
+            e.preventDefault(); // Impede o refresh da página
+            handleConsultData(); // Chama a busca
+          }}
+          className="flex flex-col md:flex-row gap-2 items-center w-full max-w-lg z-10"
+        >
           <input
             type='text'
             value={cnpj}
@@ -170,13 +171,15 @@ export const UploadPdfReport = () => {
             className='w-full p-4 rounded-lg text-lg font-bold text-gray-800 outline-none shadow-lg'
           />
           <button 
-            onClick={handleConsultData}
+            type="submit" // Define que este botão envia o form (ENTER funciona)
             disabled={isLoadingData || isAnalyzing}
             className='w-full md:w-auto px-8 py-4 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg shadow-lg disabled:opacity-50 transition-all'
           >
             {isLoadingData ? 'Buscando...' : 'Consultar'}
           </button>
-        </div>
+        </form>
+        {/* --- FIM DA MUDANÇA --- */}
+
       </div>
 
       {/* Mensagens de Erro */}
@@ -223,7 +226,7 @@ export const UploadPdfReport = () => {
           </div>
         )}
 
-        {/* --- MUDANÇA 3: Seção 2 - Parecer Profissional com Editor --- */}
+        {/* Seção 2 - Parecer Profissional com Editor */}
         {reportText && (
           <div className="w-full bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden animate-fade-in-up">
             
@@ -257,7 +260,6 @@ export const UploadPdfReport = () => {
             </div>
 
             {/* Rodapé de Ações */}
-            {/* Rodapé de Ações - ATUALIZADO */}
             <div className="bg-gray-100 p-6 flex justify-end gap-4 border-t">
               <button 
                 onClick={() => alert("Em breve: Download do PDF formatado")}
@@ -267,7 +269,7 @@ export const UploadPdfReport = () => {
               </button>
               
               <button 
-                onClick={handleFinalize} // <--- Conectado aqui
+                onClick={handleFinalize}
                 disabled={isSaving}
                 className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg shadow-md transition-all flex items-center gap-2 disabled:opacity-50"
               >
