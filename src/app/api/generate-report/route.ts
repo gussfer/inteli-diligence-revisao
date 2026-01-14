@@ -1,85 +1,73 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
-import { prisma } from '@/lib/prisma'; // Importa o banco
-import { decodeJwt } from 'jose';      // Para ler quem é o usuário
+import { decodeJwt } from 'jose';
 
 export async function POST(request: NextRequest) {
   try {
-    // 1. Segurança: Identificar quem está pedindo
+    // 1. Autenticação (Mantida igual)
     const token = request.cookies.get('auth_token')?.value;
-    if (!token) {
-      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
-    }
-    
-    // Decodifica o token para pegar o e-mail (sem verificar assinatura de novo pra ganhar tempo, pois o middleware já barrou se fosse inválido)
+    if (!token) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     const decoded = decodeJwt(token);
     const userEmail = decoded.email as string || 'desconhecido';
 
-    // 2. Receber dados
+    // 2. Recebe dados
     const body = await request.json();
     const { companyData } = body;
-
-    if (!companyData) {
-      return NextResponse.json({ error: 'Dados da empresa não fornecidos.' }, { status: 400 });
-    }
-
-    // Tenta extrair o CNPJ e Nome do JSON complexo da Aliant para facilitar a busca no banco depois
-    // (Ajuste esses caminhos conforme o JSON real da Aliant se mudar)
     const cnpj = companyData.document || companyData.registrationData?.document || "N/A";
     const companyName = companyData.registrationData?.company_name || "Nome não identificado";
 
-    // 3. Gerar Parecer com OpenAI
-    const openaiApiKey = process.env.OPENAI_API_KEY;
-    const openai = new OpenAI({ apiKey: openaiApiKey });
+    // 3. Configura IA
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    const systemPrompt = 
-`Você é um assistente sênior da Auditoria Interna do Grupo Algar.
-Sua função é analisar os dados técnicos da API Aliant e redigir um parecer executivo. Sem negritos.
+    const systemPrompt = `
+      Você é um Auditor Sênior de Compliance do Grupo Algar (Inteli Diligence).
+      Sua tarefa é analisar os dados da empresa e gerar um Parecer de Due Diligence.
 
-CONTEXTO DOS DADOS:
-- "registrationData": Dados cadastrais.
-- "corporateData": Quadro societário (QSA).
-- "risk": Score de risco (0-100) e probabilidade (ex: "Crítico").
-- "themes": Listas restritivas, processos, mídia negativa.
+      CONTEXTO DOS DADOS:
+        - "registrationData": Dados cadastrais.
+        - "corporateData": Quadro societário (QSA).
+        - "risk": Score de risco (0-100) e probabilidade (ex: "Crítico").
+        - "themes": Listas restritivas, processos, mídia negativa.
+      
+      IMPORTANTE: Você deve retornar APENAS um JSON válido no seguinte formato:
+      {
+        "riskLevel": "BAIXO" | "MEDIO" | "ALTO",
+        "reportText": "O texto completo do parecer aqui (com quebras de linha \\n)..."
+      }
 
-ESTRUTURA DO PARECER:
-1. IDENTIFICAÇÃO (Razão social, CNPJ, Fundação).
-2. ANÁLISE DE RISCO (Score, Classificação e Motivos).
-3. QUADRO SOCIETÁRIO (Principais nomes).
-4. PONTOS DE ATENÇÃO (Processos, Dívidas, Sanções).
-5. CONCLUSÃO (Recomendação de contratação).
+      CRITÉRIOS DE RISCO:
+      - ALTO: Presença de PEPs (Pessoas Expostas Politicamente), processos criminais, capital social irrisório (< R$ 5k), ou empresa inapta.
+      - MEDIO: Processos trabalhistas recentes, endereço residencial, atividade econômica divergente.
+      - BAIXO: Empresa regular, sócios idôneos, sem processos relevantes.
 
-Se não houver dados de risco, mencione isso explicitamente.`;
-
-    const userPrompt = `Analise estes dados:\n\n${JSON.stringify(companyData, null, 2)}`;
+      ESTRUTURA DO TEXTO (reportText):
+      1. IDENTIFICAÇÃO
+      2. ANÁLISE SOCIETÁRIA (Quadro de Sócios e Administradores)
+      3. APONTAMENTOS DE RISCO (Liste claramente as Red Flags)
+      4. CONCLUSÃO E RECOMENDAÇÃO (Favorable ou Desfavorable)
+    `;
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
+        { role: 'user', content: `Analise estes dados JSON:\n${JSON.stringify(companyData)}` }
       ],
-      temperature: 0.5,
-      max_tokens: 2500
+      response_format: { type: "json_object" }, // <--- O PULO DO GATO
+      temperature: 0.4, 
     });
 
-    const aiResponse = completion.choices[0]?.message?.content || 'Sem análise gerada.';
+    const content = completion.choices[0]?.message?.content;
+    if (!content) throw new Error("Sem resposta da IA");
 
-    // 4. SALVAR NO BANCO DE DADOS (AUDITORIA)
-    await prisma.consultation.create({
-      data: {
-        cnpj: String(cnpj),           // Garante que é string
-        companyName: String(companyName).substring(0, 100), // Limita tamanho por segurança
-        rawJson: companyData,         // Salva o JSON completo da Aliant
-        aiReport: aiResponse,         // Salva o texto gerado pela IA
-        requestedBy: userEmail,       // Salva quem pediu
-      }
-    });
+    // Parse do JSON que a IA gerou
+    const result = JSON.parse(content);
 
-    return NextResponse.json({ generatedReport: aiResponse }, { status: 200 });
+    // Retorna para o Frontend já separado
+    return NextResponse.json(result, { status: 200 });
 
   } catch (error) {
-    console.error('Erro na geração/salvamento:', error);
-    return NextResponse.json({ error: 'Falha ao processar solicitação' }, { status: 500 });
+    console.error('Erro:', error);
+    return NextResponse.json({ error: 'Falha ao processar' }, { status: 500 });
   }
 }

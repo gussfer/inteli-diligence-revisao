@@ -35,6 +35,7 @@ model Consultation {
   companyName     String?  
   rawJson         Json?    
   aiReport        String?  
+  riskLevel       String?
   requestedBy     String
   createdAt       DateTime @default(now())
 }

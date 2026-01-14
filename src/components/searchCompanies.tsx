@@ -4,11 +4,13 @@ import { useState } from 'react';
 import Image from 'next/image';
 import algarLogo from '@/assets/logo_algar.png';
 import JsonView from '@uiw/react-json-view'; // Visualizador de JSON
-import { useRouter } from 'next/navigation'; // <--- Importe o useRouter
+import { useRouter } from 'next/navigation'; 
 
 export const UploadPdfReport = () => {
   const [cnpj, setCnpj] = useState('');
-  const router = useRouter(); // <--- Instancie o router
+  const router = useRouter(); 
+
+  const [isSaving, setIsSaving] = useState(false); // Novo estado de loading para o botão salvar
   
   // Estados de Controle
   const [isLoadingData, setIsLoadingData] = useState(false); // Carregando Aliant
@@ -16,7 +18,10 @@ export const UploadPdfReport = () => {
   
   // Estados de Dados
   const [companyData, setCompanyData] = useState<any>(null); // JSON bruto
-  const [report, setReport] = useState('');                  // Parecer final
+  
+  // --- MUDANÇA 1: Novos estados para o Parecer 2.0 ---
+  const [reportText, setReportText] = useState('');          // Texto Editável
+  const [riskLevel, setRiskLevel] = useState('');            // Risco (BAIXO, MEDIO, ALTO)
   const [errorMessage, setErrorMessage] = useState('');
 
   // Máscara CNPJ
@@ -41,7 +46,8 @@ export const UploadPdfReport = () => {
     setIsLoadingData(true);
     setErrorMessage('');
     setCompanyData(null);
-    setReport('');
+    setReportText(''); // Limpa relatório anterior
+    setRiskLevel('');  // Limpa risco anterior
 
     try {
       const response = await fetch('/api/consult-company', {
@@ -54,7 +60,7 @@ export const UploadPdfReport = () => {
 
       if (!response.ok) throw new Error(data.details || 'Erro ao consultar.');
       
-      setCompanyData(data); // Salva o JSON para exibir
+      setCompanyData(data); 
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Erro desconhecido.');
     } finally {
@@ -73,14 +79,19 @@ export const UploadPdfReport = () => {
       const response = await fetch('/api/generate-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ companyData }), // Envia o JSON que já temos no front
+        body: JSON.stringify({ companyData }),
       });
 
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Erro ao gerar parecer.');
 
-      setReport(data.generatedReport);
+      // --- MUDANÇA 2: Processar JSON estruturado ---
+      // Agora esperamos que o backend retorne { riskLevel, reportText }
+      setReportText(data.reportText || data.generatedReport || "Erro ao ler texto.");
+      setRiskLevel(data.riskLevel || "NÃO CLASSIFICADO");
+
     } catch (error) {
+      console.error(error);
       setErrorMessage('Erro ao gerar análise com IA.');
     } finally {
       setIsAnalyzing(false);
@@ -93,12 +104,55 @@ export const UploadPdfReport = () => {
     router.push('/login');
   };
 
+  // Função Auxiliar para Cor do Risco
+  const getRiskBadgeColor = (level: string) => {
+    switch (level?.toUpperCase()) {
+      case 'ALTO': return 'bg-red-600';
+      case 'MEDIO': return 'bg-yellow-500';
+      case 'BAIXO': return 'bg-green-600';
+      default: return 'bg-gray-500';
+    }
+  };
+// Função para salvar informações no banco
+  const handleFinalize = async () => {
+    if (!companyData || !reportText) return;
+
+    setIsSaving(true);
+
+    try {
+      const response = await fetch('/api/save-consultation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companyData: companyData, // Envia o JSON original
+          reportText: reportText,   // Envia o texto QUE ESTÁ NA TELA (pode ter sido editado)
+          riskLevel: riskLevel      // Envia o risco
+        }),
+      });
+
+      if (!response.ok) throw new Error('Erro ao salvar');
+
+      alert('✅ Auditoria finalizada e salva com sucesso!');
+      
+      // Opcional: Limpar a tela ou redirecionar
+      // setCompanyData(null);
+      // setReportText('');
+      // setCnpj('');
+
+    } catch (error) {
+      alert('Erro ao salvar o registro.');
+      console.error(error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div className='w-full h-auto bg-white flex flex-col items-center pb-20'>
       {/* Header */}
       <div className='h-72 md:min-h-[400px] w-full flex flex-col gap-10 items-center justify-center bg-gradient-to-l from-[#1E4C78] to-[#1E4C78] relative shadow-lg'>
         <Image src={algarLogo} alt='Logo Algar' width={160} height={20} className="absolute top-4 left-4" />
-        {/* BOTÃO DE LOGOUT (NOVO) */}
+        
         <button 
           onClick={handleLogout}
           className="absolute top-4 right-4 bg-red-500/80 hover:bg-red-600 text-white text-sm font-bold px-4 py-2 rounded transition-colors"
@@ -144,12 +198,11 @@ export const UploadPdfReport = () => {
             </div>
             
             <div className="p-4 max-h-[400px] overflow-auto">
-              {/* Componente para visualizar JSON de forma bonita */}
               <JsonView value={companyData} collapsed={2} />
             </div>
 
             {/* Botão de Ação para a próxima etapa */}
-            {!report && (
+            {!reportText && (
               <div className="p-4 bg-white border-t flex justify-end">
                 <button
                   onClick={handleGenerateReport}
@@ -159,7 +212,7 @@ export const UploadPdfReport = () => {
                   {isAnalyzing ? (
                     <>
                       <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                      Analisando...
+                      Analisando Riscos...
                     </>
                   ) : (
                     '🤖 Gerar Parecer com IA'
@@ -170,16 +223,56 @@ export const UploadPdfReport = () => {
           </div>
         )}
 
-        {/* Seção 2: Parecer da IA */}
-        {report && (
-          <div className='w-full p-8 text-black bg-white rounded-lg shadow-md border-l-8 border-[#1E4C78] animate-fade-in-up'>
-            <h3 className="text-2xl font-bold mb-6 text-[#1E4C78] flex items-center gap-2">
-              📝 Parecer da Auditoria
-            </h3>
-            <div className="prose max-w-none">
-              <pre className='whitespace-pre-wrap font-sans text-gray-800 leading-relaxed text-base'>
-                {report}
-              </pre>
+        {/* --- MUDANÇA 3: Seção 2 - Parecer Profissional com Editor --- */}
+        {reportText && (
+          <div className="w-full bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden animate-fade-in-up">
+            
+            {/* Cabeçalho do Parecer */}
+            <div className="bg-gray-50 border-b p-6 flex flex-col md:flex-row justify-between items-center gap-4">
+              <h3 className="text-2xl font-bold text-[#1E4C78] flex items-center gap-2">
+                📝 Parecer de Auditoria
+              </h3>
+              
+              {/* SELO DE RISCO */}
+              <div className={`px-6 py-2 rounded-full text-white font-bold shadow-sm tracking-wide ${getRiskBadgeColor(riskLevel)}`}>
+                RISCO: {riskLevel || 'EM ANÁLISE'}
+              </div>
+            </div>
+
+            {/* Corpo do Editor */}
+            <div className="p-6">
+              <label className="block text-sm font-semibold text-gray-500 mb-2 uppercase tracking-wider">
+                Conteúdo do Parecer (Editável)
+              </label>
+              <div className="relative">
+                <textarea
+                  value={reportText}
+                  onChange={(e) => setReportText(e.target.value)}
+                  className="w-full h-[500px] p-6 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#1E4C78] focus:border-transparent font-mono text-sm leading-relaxed text-gray-800 bg-gray-50 shadow-inner resize-y"
+                />
+                <p className="text-xs text-gray-400 mt-2 text-right italic">
+                  * Este texto foi pré-gerado por IA. A validação final é responsabilidade do auditor.
+                </p>
+              </div>
+            </div>
+
+            {/* Rodapé de Ações */}
+            {/* Rodapé de Ações - ATUALIZADO */}
+            <div className="bg-gray-100 p-6 flex justify-end gap-4 border-t">
+              <button 
+                onClick={() => alert("Em breve: Download do PDF formatado")}
+                className="px-6 py-3 bg-white hover:bg-gray-50 text-gray-700 font-bold rounded-lg border border-gray-300 shadow-sm transition-all"
+              >
+                📄 Baixar PDF
+              </button>
+              
+              <button 
+                onClick={handleFinalize} // <--- Conectado aqui
+                disabled={isSaving}
+                className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg shadow-md transition-all flex items-center gap-2 disabled:opacity-50"
+              >
+                {isSaving ? 'Salvando...' : '✅ Validar e Finalizar'}
+              </button>
             </div>
           </div>
         )}

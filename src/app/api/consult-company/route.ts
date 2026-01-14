@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
       clientId: String(clientId),
       personWorkflows: [],
       entityWorkflows: [],
-      partnerSearch: false,
+      partnerSearch: true,
       personType: 2,
       webhook_url: "https://webhook.site/placeholder"
     };

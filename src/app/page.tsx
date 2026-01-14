@@ -1,4 +1,3 @@
-'use client'
 import { UploadPdfReport } from '@/components/searchCompanies';
 
 
