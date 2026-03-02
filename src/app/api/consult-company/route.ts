@@ -40,13 +40,13 @@ export async function POST(request: NextRequest) {
     // 3. Start Process
     const processBody = {
       document: documentCnpj,
-      workflows: [71],
+      workflows: [6600], // alterar para 6600 em produção
       forceOpening: true,
       userId: String(userId),
       clientId: String(clientId),
       personWorkflows: [],
       entityWorkflows: [],
-      partnerSearch: true,
+      partnerSearch: false,
       personType: 2,
       webhook_url: "https://webhook.site/placeholder"
     };
