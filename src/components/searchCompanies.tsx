@@ -15,6 +15,7 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
   // Estados de Controle
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);    
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false); // NOVO ESTADO: Controle do Download Aliant
   
   // Estados de Dados
   const [companyData, setCompanyData] = useState<any>(null);
@@ -96,6 +97,70 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
     }
   };
 
+  // --- NOVA FUNÇÃO: BAIXAR PDF ORIGINAL DA ALIANT ---
+  const handleDownloadAliantPdf = async () => {
+    // Busca o ID do processo dentro do JSON de retorno da Aliant
+    const processId = companyData?.process_id || companyData?.id; 
+
+    if (!processId) {
+      alert("ID do processo não encontrado nos dados da consulta.");
+      return;
+    }
+
+    setIsDownloadingPdf(true);
+
+    try {
+      // 1. Solicita a criação do relatório
+      const reqResponse = await fetch('/api/aliant/request-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ processId })
+      });
+
+      const reqData = await reqResponse.json();
+      if (!reqResponse.ok) throw new Error(reqData.error || 'Erro ao pedir o relatório');
+
+      const reportId = reqData.reportId;
+      let isReady = false;
+      let attempts = 0;
+
+      // 2. Polling: Tenta baixar a cada 5 segundos (máximo de 1 minuto)
+      while (!isReady && attempts < 12) {
+        attempts++;
+        
+        const downloadResponse = await fetch(`/api/aliant/download-report?id=${reportId}`);
+        
+        if (downloadResponse.status === 200) {
+          // Relatório pronto! Faz o download no navegador
+          const blob = await downloadResponse.blob();
+          const url = window.URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `Relatorio_Aliant_${processId}.pdf`; 
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          
+          isReady = true;
+        } else {
+          // Se ainda for 202 (Pending), aguarda 5 segundos antes da próxima tentativa
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        }
+      }
+
+      if (!isReady) {
+        alert("O relatório está demorando para ser gerado pela Aliant. Tente novamente mais tarde.");
+      }
+
+    } catch (error) {
+      console.error(error);
+      alert("Erro na operação de download do relatório Aliant.");
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+  // --- FIM DA NOVA FUNÇÃO ---
+
   // Função para fazer logout
   const handleLogout = async () => {
     await fetch('/api/auth/logout');
@@ -155,7 +220,6 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
         </button>
         <h2 className='font-bold text-2xl md:text-4xl text-white mt-10'>🧠 Inteli Diligence</h2>
         
-        {/* --- AQUI ESTÁ A MUDANÇA: DIV TROCADO POR FORM --- */}
         <form 
           onSubmit={(e) => {
             e.preventDefault(); // Impede o refresh da página
@@ -171,15 +235,13 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
             className='w-full p-4 rounded-lg text-lg font-bold text-gray-800 outline-none shadow-lg'
           />
           <button 
-            type="submit" // Define que este botão envia o form (ENTER funciona)
+            type="submit" 
             disabled={isLoadingData || isAnalyzing}
             className='w-full md:w-auto px-8 py-4 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg shadow-lg disabled:opacity-50 transition-all'
           >
             {isLoadingData ? 'Buscando...' : 'Consultar'}
           </button>
         </form>
-        {/* --- FIM DA MUDANÇA --- */}
-
       </div>
 
       {/* Mensagens de Erro */}
@@ -204,13 +266,31 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
               <JsonView value={companyData} collapsed={2} />
             </div>
 
-            {/* Botão de Ação para a próxima etapa */}
+            {/* Botões de Ação para as próximas etapas */}
             {!reportText && (
-              <div className="p-4 bg-white border-t flex justify-end">
+              <div className="p-4 bg-white border-t flex flex-col md:flex-row justify-end gap-4">
+                
+                {/* --- NOVO BOTÃO: DOWNLOAD PDF ALIANT --- */}
+                <button
+                  onClick={handleDownloadAliantPdf}
+                  disabled={isDownloadingPdf || isAnalyzing}
+                  className="bg-gray-100 border border-gray-300 text-gray-700 px-6 py-3 rounded-lg font-bold hover:bg-gray-200 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isDownloadingPdf ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-gray-700 border-t-transparent rounded-full animate-spin"></div>
+                      Aguardando PDF...
+                    </>
+                  ) : (
+                    '📄 Baixar Relatório Aliant'
+                  )}
+                </button>
+
+                {/* BOTÃO EXISTENTE DA IA */}
                 <button
                   onClick={handleGenerateReport}
-                  disabled={isAnalyzing}
-                  className="bg-[#1E4C78] text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-900 transition-colors flex items-center gap-2"
+                  disabled={isAnalyzing || isDownloadingPdf}
+                  className="bg-[#1E4C78] text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-900 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {isAnalyzing ? (
                     <>
@@ -262,10 +342,10 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
             {/* Rodapé de Ações */}
             <div className="bg-gray-100 p-6 flex justify-end gap-4 border-t">
               <button 
-                onClick={() => alert("Em breve: Download do PDF formatado")}
+                onClick={() => alert("Em breve: Download do PDF formatado (Parecer da IA)")}
                 className="px-6 py-3 bg-white hover:bg-gray-50 text-gray-700 font-bold rounded-lg border border-gray-300 shadow-sm transition-all"
               >
-                📄 Baixar PDF
+                📄 Baixar PDF do Parecer
               </button>
               
               <button 
