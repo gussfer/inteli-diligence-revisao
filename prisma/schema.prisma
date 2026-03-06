@@ -50,3 +50,12 @@ model VerificationCode {
 
   @@index([email])
 }
+
+// Tabela para armazenar processId
+model ProcessHistory {
+  id        String   @id @default(cuid())
+  processId Int      @unique
+  document  String   // Salva o CPF ou CNPJ
+  docType   String   // 'CPF' ou 'CNPJ'
+  createdAt DateTime @default(now())
+}

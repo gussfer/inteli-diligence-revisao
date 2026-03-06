@@ -3,19 +3,22 @@
 import { useState } from 'react';
 import Image from 'next/image';
 import algarLogo from '@/assets/logo_algar.png';
-import JsonView from '@uiw/react-json-view'; // Visualizador de JSON
+import JsonView from '@uiw/react-json-view';
 import { useRouter } from 'next/navigation'; 
 
-export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para SearchCompanies futuramente
-  const [cnpj, setCnpj] = useState('');
+export const SearchCompanies = () => { 
   const router = useRouter(); 
+
+  // --- ESTADOS: Controle de Documento ---
+  const [docType, setDocType] = useState<'CNPJ' | 'CPF'>('CNPJ');
+  const [documentInput, setDocumentInput] = useState('');
 
   const [isSaving, setIsSaving] = useState(false);
   
   // Estados de Controle
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);    
-  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false); // NOVO ESTADO: Controle do Download Aliant
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   
   // Estados de Dados
   const [companyData, setCompanyData] = useState<any>(null);
@@ -25,22 +28,32 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
   const [riskLevel, setRiskLevel] = useState('');            
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Máscara CNPJ
-  const handleCnpjChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // --- MÁSCARA DINÂMICA (CPF / CNPJ) ---
+  const handleDocumentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value.replace(/\D/g, '');
-    if (value.length > 14) value = value.slice(0, 14);
-    value = value.replace(/^(\d{2})(\d)/, '$1.$2');
-    value = value.replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3');
-    value = value.replace(/\.(\d{3})(\d)/, '.$1/$2');
-    value = value.replace(/(\d{4})(\d)/, '$1-$2');
-    setCnpj(value);
+
+    if (docType === 'CPF') {
+      if (value.length > 11) value = value.slice(0, 11);
+      value = value.replace(/(\d{3})(\d)/, '$1.$2');
+      value = value.replace(/(\d{3})(\d)/, '$1.$2');
+      value = value.replace(/(\d{3})(\d{1,2})$/, '$1-$2');
+    } else {
+      if (value.length > 14) value = value.slice(0, 14);
+      value = value.replace(/^(\d{2})(\d)/, '$1.$2');
+      value = value.replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3');
+      value = value.replace(/\.(\d{3})(\d)/, '.$1/$2');
+      value = value.replace(/(\d{4})(\d)/, '$1-$2');
+    }
+    
+    setDocumentInput(value);
   };
 
   // PASSO 1: Buscar Dados (Aliant)
   const handleConsultData = async () => {
-    const cleanCnpj = cnpj.replace(/\D/g, '');
-    if (cleanCnpj.length !== 14) {
-      setErrorMessage('CNPJ inválido.');
+    const cleanDoc = documentInput.replace(/\D/g, '');
+    
+    if ((docType === 'CPF' && cleanDoc.length !== 11) || (docType === 'CNPJ' && cleanDoc.length !== 14)) {
+      setErrorMessage(`Documento inválido. Digite um ${docType} completo.`);
       return;
     }
 
@@ -54,7 +67,7 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
       const response = await fetch('/api/consult-company', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cnpj }),
+        body: JSON.stringify({ document: documentInput, type: docType }), 
       });
 
       const data = await response.json();
@@ -97,9 +110,8 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
     }
   };
 
-  // --- NOVA FUNÇÃO: BAIXAR PDF ORIGINAL DA ALIANT ---
+  // BAIXAR PDF ORIGINAL DA ALIANT
   const handleDownloadAliantPdf = async () => {
-    // Busca o ID do processo dentro do JSON de retorno da Aliant
     const processId = companyData?.process_id || companyData?.id; 
 
     if (!processId) {
@@ -110,7 +122,6 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
     setIsDownloadingPdf(true);
 
     try {
-      // 1. Solicita a criação do relatório
       const reqResponse = await fetch('/api/aliant/request-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -124,14 +135,12 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
       let isReady = false;
       let attempts = 0;
 
-      // 2. Polling: Tenta baixar a cada 5 segundos (máximo de 1 minuto)
       while (!isReady && attempts < 12) {
         attempts++;
         
         const downloadResponse = await fetch(`/api/aliant/download-report?id=${reportId}`);
         
         if (downloadResponse.status === 200) {
-          // Relatório pronto! Faz o download no navegador
           const blob = await downloadResponse.blob();
           const url = window.URL.createObjectURL(blob);
           const link = document.createElement('a');
@@ -143,7 +152,6 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
           
           isReady = true;
         } else {
-          // Se ainda for 202 (Pending), aguarda 5 segundos antes da próxima tentativa
           await new Promise(resolve => setTimeout(resolve, 5000));
         }
       }
@@ -159,7 +167,6 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
       setIsDownloadingPdf(false);
     }
   };
-  // --- FIM DA NOVA FUNÇÃO ---
 
   // Função para fazer logout
   const handleLogout = async () => {
@@ -209,39 +216,75 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
   return (
     <div className='w-full h-auto bg-white flex flex-col items-center pb-20'>
       {/* Header */}
-      <div className='h-72 md:min-h-[400px] w-full flex flex-col gap-10 items-center justify-center bg-gradient-to-l from-[#1E4C78] to-[#1E4C78] relative shadow-lg'>
+      <div className='h-72 md:min-h-[400px] w-full flex flex-col gap-6 items-center justify-center bg-gradient-to-l from-[#1E4C78] to-[#1E4C78] relative shadow-lg'>
         <Image src={algarLogo} alt='Logo Algar' width={160} height={20} className="absolute top-4 left-4" />
         
-        <button 
-          onClick={handleLogout}
-          className="absolute top-4 right-4 bg-red-500/80 hover:bg-red-600 text-white text-sm font-bold px-4 py-2 rounded transition-colors"
-        >
-          Sair / Logout
-        </button>
-        <h2 className='font-bold text-2xl md:text-4xl text-white mt-10'>🧠 Inteli Diligence</h2>
-        
-        <form 
-          onSubmit={(e) => {
-            e.preventDefault(); // Impede o refresh da página
-            handleConsultData(); // Chama a busca
-          }}
-          className="flex flex-col md:flex-row gap-2 items-center w-full max-w-lg z-10"
-        >
-          <input
-            type='text'
-            value={cnpj}
-            onChange={handleCnpjChange}
-            placeholder="00.000.000/0000-00"
-            className='w-full p-4 rounded-lg text-lg font-bold text-gray-800 outline-none shadow-lg'
-          />
+        {/* BOTÕES DO CABEÇALHO (Histórico e Sair) */}
+        <div className="absolute top-4 right-4 flex gap-4 items-center z-20">
           <button 
-            type="submit" 
-            disabled={isLoadingData || isAnalyzing}
-            className='w-full md:w-auto px-8 py-4 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg shadow-lg disabled:opacity-50 transition-all'
+            onClick={() => router.push('/historico')}
+            className="text-white hover:text-gray-300 text-sm font-bold transition-colors underline underline-offset-4"
           >
-            {isLoadingData ? 'Buscando...' : 'Consultar'}
+            Ver Histórico
           </button>
-        </form>
+          <button 
+            onClick={handleLogout}
+            className="bg-red-500/80 hover:bg-red-600 text-white text-sm font-bold px-4 py-2 rounded transition-colors"
+          >
+            Sair
+          </button>
+        </div>
+
+        <h2 className='font-bold text-2xl md:text-4xl text-white mt-12'>🧠 Inteli Diligence</h2>
+        
+        {/* --- SEÇÃO DE CONSULTA (TOGGLE + FORM) --- */}
+        <div className="flex flex-col w-full max-w-lg z-10 gap-2">
+          
+          {/* BOTÕES DE SELEÇÃO DE DOCUMENTO */}
+          <div className="flex bg-white/20 p-1 rounded-lg w-full mb-1">
+            <button
+              type="button"
+              onClick={() => { setDocType('CNPJ'); setDocumentInput(''); setErrorMessage(''); }}
+              className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${
+                docType === 'CNPJ' ? 'bg-white text-[#1E4C78] shadow-md' : 'text-white/80 hover:text-white'
+              }`}
+            >
+              🏢 Pessoa Jurídica (CNPJ)
+            </button>
+            <button
+              type="button"
+              onClick={() => { setDocType('CPF'); setDocumentInput(''); setErrorMessage(''); }}
+              className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${
+                docType === 'CPF' ? 'bg-white text-[#1E4C78] shadow-md' : 'text-white/80 hover:text-white'
+              }`}
+            >
+              👤 Pessoa Física (CPF)
+            </button>
+          </div>
+
+          <form 
+            onSubmit={(e) => {
+              e.preventDefault(); 
+              handleConsultData(); 
+            }}
+            className="flex flex-col md:flex-row gap-2 items-center w-full"
+          >
+            <input
+              type='text'
+              value={documentInput}
+              onChange={handleDocumentChange}
+              placeholder={docType === 'CNPJ' ? "00.000.000/0000-00" : "000.000.000-00"}
+              className='w-full p-4 rounded-lg text-lg font-bold text-gray-800 outline-none shadow-lg'
+            />
+            <button 
+              type="submit" 
+              disabled={isLoadingData || isAnalyzing}
+              className='w-full md:w-auto px-8 py-4 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg shadow-lg disabled:opacity-50 transition-all'
+            >
+              {isLoadingData ? 'Buscando...' : 'Consultar'}
+            </button>
+          </form>
+        </div>
       </div>
 
       {/* Mensagens de Erro */}
@@ -270,7 +313,7 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
             {!reportText && (
               <div className="p-4 bg-white border-t flex flex-col md:flex-row justify-end gap-4">
                 
-                {/* --- NOVO BOTÃO: DOWNLOAD PDF ALIANT --- */}
+                {/* BOTÃO DOWNLOAD PDF ALIANT */}
                 <button
                   onClick={handleDownloadAliantPdf}
                   disabled={isDownloadingPdf || isAnalyzing}
@@ -286,7 +329,7 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
                   )}
                 </button>
 
-                {/* BOTÃO EXISTENTE DA IA */}
+                {/* BOTÃO DA IA */}
                 <button
                   onClick={handleGenerateReport}
                   disabled={isAnalyzing || isDownloadingPdf}
@@ -316,7 +359,6 @@ export const UploadPdfReport = () => { // Lembre-se: Sugiro renomear para Search
                 📝 Parecer de Auditoria
               </h3>
               
-              {/* SELO DE RISCO */}
               <div className={`px-6 py-2 rounded-full text-white font-bold shadow-sm tracking-wide ${getRiskBadgeColor(riskLevel)}`}>
                 RISCO: {riskLevel || 'EM ANÁLISE'}
               </div>

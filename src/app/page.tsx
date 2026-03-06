@@ -1,11 +1,9 @@
-import { UploadPdfReport } from '@/components/searchCompanies';
-
+import { SearchCompanies } from '@/components/searchCompanies';
 
 export default function Home() {
-
   return (
-    <section className="w-full h-screen flex flex-col bg-white items-center overflow-x-hidden">
-      <UploadPdfReport />
+    <section className="w-full min-h-screen flex flex-col bg-white items-center overflow-x-hidden">
+      <SearchCompanies />
     </section>
   );
 }
