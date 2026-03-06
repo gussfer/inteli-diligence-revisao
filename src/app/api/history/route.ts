@@ -5,7 +5,7 @@ const prisma = new PrismaClient();
 
 export async function GET() {
   try {
-    const processes = await prisma.ProcessHistory.findMany({
+    const processes = await prisma.processHistory.findMany({
       orderBy: { createdAt: 'desc' } // Mostra os mais recentes primeiro
     });
     return NextResponse.json(processes);

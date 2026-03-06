@@ -1,13 +1,7 @@
-/*
-**********************************
-VERSÃO PRODUÇÃO (processId dinâmico)
-**********************************
-*/
-
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client'; // Importando o Prisma
+import { PrismaClient } from '@prisma/client';
 
-const prisma = new PrismaClient(); // Iniciando o Prisma
+const prisma = new PrismaClient();
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,6 +12,10 @@ export async function POST(request: NextRequest) {
     if (!document || !type) {
       return NextResponse.json({ error: 'Documento ou tipo não informados' }, { status: 400 });
     }
+
+    // --- PADRONIZAÇÃO DE DADOS ---
+    // Remove tudo que não for número (pontos, traços, barras) para padronizar o banco de dados
+    const cleanDocument = document.replace(/\D/g, '');
 
     // Define se é CPF (1) ou CNPJ (2)
     const isCPF = type === 'CPF';
@@ -34,12 +32,23 @@ export async function POST(request: NextRequest) {
       throw new Error('Configurações da API Aliant ausentes.');
     }
 
-    // 1. Login
+    // ===============================================================
+    // 1. VERIFICA SE O DOCUMENTO JÁ FOI CONSULTADO ANTES (NO BANCO)
+    // ===============================================================
+    const existingRecord = await prisma.processHistory.findFirst({
+      where: { document: cleanDocument }, // Usa apenas os números para a busca
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // ===============================================================
+    // 2. FAZ LOGIN NA ALIANT (Sempre precisamos do Token para buscar)
+    // ===============================================================
     const loginRes = await fetch(`${API_BASE}/portal/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: USERNAME, password: PASSWORD })
     });
+    
     if (!loginRes.ok) throw new Error('Erro no Login Aliant');
     const loginData = await loginRes.json();
     const token = loginData.token;
@@ -49,66 +58,82 @@ export async function POST(request: NextRequest) {
       'Content-Type': 'application/json'
     };
 
-    // 2. User Info
-    const userRes = await fetch(`${API_BASE}/services/user/me`, { headers: authHeaders });
-    if (!userRes.ok) throw new Error('Erro ao obter usuário');
-    const userData = await userRes.json();
-    const userId = userData.data.usuario.id;
-    const clientId = userData.data.usuario.idcliente;
+    let processId; 
 
-    // 3. Start Process
-    const processBody = {
-      document: document,
-      workflows: [workflowId], // Utiliza o ID dinâmico
-      forceOpening: true,
-      userId: String(userId),
-      clientId: String(clientId),
-      personWorkflows: [],
-      entityWorkflows: [],
-      partnerSearch: false,
-      personType: personType, // Utiliza o tipo dinâmico
-      webhook_url: "https://webhook.site/placeholder"
-    };
+    // ===============================================================
+    // 3. DECISÃO: REAPROVEITAR (ECONOMIZAR) OU CRIAR NOVO PROCESSO
+    // ===============================================================
+    if (existingRecord) {
+      
+      // CACHE HIT: O documento já existe! Vamos usar o ID salvo.
+      processId = existingRecord.processId;
+      console.log(`[ECONOMIA] Reutilizando processId ${processId} para o documento ${cleanDocument}`);
+      
+    } else {
+      
+      // CACHE MISS: Documento novo. Precisamos gastar uma requisição de criação.
+      console.log(`[NOVA CONSULTA] Criando novo processo para o documento ${cleanDocument}`);
+      
+      // 3.1 Pegar Infos do Usuário
+      const userRes = await fetch(`${API_BASE}/services/user/me`, { headers: authHeaders });
+      if (!userRes.ok) throw new Error('Erro ao obter usuário');
+      const userData = await userRes.json();
+      const userId = userData.data.usuario.id;
+      const clientId = userData.data.usuario.idcliente;
 
-    const processRes = await fetch(`${API_BASE}/services/process`, {
-      method: 'POST',
-      headers: authHeaders,
-      body: JSON.stringify(processBody)
-    });
+      // 3.2 Iniciar novo processo na Aliant
+      const processBody = {
+        document: document, // A Aliant aceita com pontuação, então enviamos o que veio do front
+        workflows: [workflowId], 
+        forceOpening: true,
+        userId: String(userId),
+        clientId: String(clientId),
+        personWorkflows: [],
+        entityWorkflows: [],
+        partnerSearch: false,
+        personType: personType, 
+        webhook_url: "https://webhook.site/placeholder"
+      };
 
-    if (!processRes.ok) throw new Error('Erro ao iniciar processo');
-    const processData = await processRes.json();
-    const processId = processData.process_id;
+      const processRes = await fetch(`${API_BASE}/services/process`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify(processBody)
+      });
 
-    // 4. Get Results
+      if (!processRes.ok) throw new Error('Erro ao iniciar processo');
+      const processData = await processRes.json();
+      processId = processData.process_id;
+
+      // 3.3 Salvar o novo processo no banco de dados para economizar no futuro
+      try {
+        await prisma.processHistory.upsert({
+          where: { processId: Number(processId) },
+          update: {}, 
+          create: {
+            processId: Number(processId),
+            document: cleanDocument, // Salva APENAS os números limpos no banco
+            docType: type
+          }
+        });
+      } catch (dbError) {
+        console.error("Aviso: Erro ao salvar novo histórico no banco.", dbError);
+      }
+    }
+
+    // ===============================================================
+    // 4. BUSCAR OS RESULTADOS DA ALIANT E DEVOLVER PRO FRONT-END
+    // ===============================================================
     const resultRes = await fetch(`${API_BASE}/services/process/${processId}`, {
       method: 'GET',
       headers: authHeaders
     });
 
-    if (!resultRes.ok) throw new Error('Erro ao buscar resultado');
+    if (!resultRes.ok) throw new Error('Erro ao buscar resultado do processo na Aliant');
     const companyFullData = await resultRes.json();
     
     // Injeta o process_id no retorno para o download do PDF funcionar no Front
     companyFullData.process_id = processId; 
-
-    // ===============================================================
-    // 5. SALVA A CONSULTA NO HISTÓRICO (BANCO DE DADOS)
-    // ===============================================================
-    try {
-      await prisma.ProcessHistory.upsert({
-        where: { processId: Number(processId) },
-        update: {}, // Se já existir na tabela, não faz nada
-        create: {
-          processId: Number(processId),
-          document: document,
-          docType: type
-        }
-      });
-    } catch (dbError) {
-      // Usamos apenas um aviso no console. Se o banco falhar, o usuário ainda vê a consulta.
-      console.error("Aviso: Erro ao salvar histórico no banco, mas a consulta na Aliant seguiu com sucesso.", dbError);
-    }
 
     return NextResponse.json(companyFullData, { status: 200 });
 
@@ -120,86 +145,3 @@ export async function POST(request: NextRequest) {
     }, { status: 500 });
   }
 }
-
-/*
-**********************************
-VERSÃO HOMOLOGAÇÃO (processId fixo(1714053))
-**********************************
-*/
-// import { NextRequest, NextResponse } from 'next/server';
-
-// export async function POST(request: NextRequest) {
-//   try {
-//     const body = await request.json();
-//     const { cnpj } = body;
-
-//     const documentCnpj = cnpj; 
-
-//     const API_BASE = process.env.ALIANT_API_URL;
-//     const USERNAME = process.env.ALIANT_USERNAME;
-//     const PASSWORD = process.env.ALIANT_PASSWORD;
-
-//     if (!API_BASE || !USERNAME || !PASSWORD) {
-//       throw new Error('Configurações da API Aliant ausentes.');
-//     }
-
-//     // 1. Login
-//     const loginRes = await fetch(`${API_BASE}/portal/login`, {
-//       method: 'POST',
-//       headers: { 'Content-Type': 'application/json' },
-//       body: JSON.stringify({ username: USERNAME, password: PASSWORD })
-//     });
-//     if (!loginRes.ok) throw new Error('Erro no Login Aliant');
-//     const loginData = await loginRes.json();
-//     const token = loginData.token;
-
-//     const authHeaders = {
-//       'Authorization': `Bearer ${token}`,
-//       'Content-Type': 'application/json'
-//     };
-
-//     // 2. User Info
-//     const userRes = await fetch(`${API_BASE}/services/user/me`, { headers: authHeaders });
-//     if (!userRes.ok) throw new Error('Erro ao obter usuário');
-//     const userData = await userRes.json();
-//     // const userId = userData.data.usuario.id;
-//     // const clientId = userData.data.usuario.idcliente;
-
-//     /* ===============================================================
-//       3. START PROCESS (COMENTADO PARA NÃO GASTAR COTA)
-//       ===============================================================
-//       const processBody = { ... }
-//       const processRes = await fetch(...)
-//       const processData = await processRes.json();
-//       const processId = processData.process_id;
-//     */
-
-//     // ===============================================================
-//     // MOCK FIXO: Usando o Process ID que você já tem!
-//     // ===============================================================
-//     const processId = 1714053; 
-
-//     // 4. Get Results (Vai buscar direto os dados desse ID)
-//     const resultRes = await fetch(`${API_BASE}/services/process/${processId}`, {
-//       method: 'GET',
-//       headers: authHeaders
-//     });
-
-//     if (!resultRes.ok) throw new Error('Erro ao buscar resultado');
-//     const companyFullData = await resultRes.json();
-
-//     // Adicionamos o processId dentro do retorno para garantir que o front-end ache ele na hora de baixar o PDF
-//     companyFullData.process_id = processId;
-
-//     // RETORNA APENAS OS DADOS BRUTOS
-//     return NextResponse.json(companyFullData, { status: 200 });
-
-//   } catch (error) {
-//     console.error('Erro na consulta Aliant:', error);
-//     return NextResponse.json({ 
-//       error: 'Falha na consulta do fornecedor', 
-//       details: error instanceof Error ? error.message : String(error) 
-//     }, { status: 500 });
-//   }
-// }
-
